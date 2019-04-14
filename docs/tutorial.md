@@ -15,17 +15,14 @@ It will take in a second worth of audio input at 16 kHz and classify it as one o
 The data used to train this model is from the Tensorflow Speech Commands Dataset. This dataset was recently featured in a kaggle competition (<https://www.kaggle.com/c/tensorflow-speech-recognition-challenge>) and our model roughly follows the parameters of that challenge. 
 
 The training data consists of 1-second clips of various people saying the command. The format of the clips is in 16kHz, 16-bit mono wave file files. This means that for each clip, we load 16000 audio samples as a list of 16-bit integers. To make training a bit easier for our network, we'll normalize the input to a range of -1 to 1 by dividing the samples by 2^15. This is the only preprocessing we'll do and, depending on the audio format used by the microphone, may or may not be required in our iOS app.
-'samples = samples / (2**15)
+`samples = samples / (2**15)`
+
+Our network is defined as follows:
 
 ```python
 input_shape = (16000,)
 
-# NVIDIA's Formant analysis network
 model = keras.models.Sequential()
-
-# Formant Analysis network
-# Autocorrelation layer
-#keras.layers.Lambda(AutoCorrelationLayer, input_shape=input_shape, output_shape=(124,32,1))
 
 model.add(keras.layers.Reshape((16000,1), input_shape=input_shape))
 model.add(keras.layers.Conv1D(2, kernel_size=4, strides=2, activation='relu', padding='valid'))
@@ -40,7 +37,6 @@ model.add(keras.layers.Dense(300, activation='relu'))
 model.add(keras.layers.Dense(150, activation='relu'))
 model.add(keras.layers.Dense(len(labelNames), activation='softmax'))
 
-
 #Compile model with loss and optimizer functions
 model.compile(loss=keras.losses.categorical_crossentropy,
               optimizer=keras.optimizers.Adam(),
@@ -48,6 +44,10 @@ model.compile(loss=keras.losses.categorical_crossentropy,
 
 model.summary()
 ```
+
+This architecture was chosen pretty arbitrarily, and you should try to experiment and find a better one if you're so inclined. After training, the model is about 60% accurate on the data we set aside for validation. That's pretty abyssmal for any real applications, but it's okay for our demonstration purposes. For reference, the winner of the kaggle challenge achieved around 91% accuracy.
+
+Note the Reshape layer right at the beginning. CoreML only supports 1, 3, or 5 dimensions for input, but our convolutional network needs a second dimension for the convolution filters. The Reshape layer adds that second dimension to the 1-dimensional input.
 
 ## Converting to CoreML
 
