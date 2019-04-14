@@ -15,6 +15,7 @@ It will take in a second worth of audio input at 16 kHz and classify it as one o
 The data used to train this model is from the Tensorflow Speech Commands Dataset. This dataset was recently featured in a kaggle competition (<https://www.kaggle.com/c/tensorflow-speech-recognition-challenge>) and our model roughly follows the parameters of that challenge. 
 
 The training data consists of 1-second clips of various people saying the command. The format of the clips is in 16kHz, 16-bit mono wave file files. This means that for each clip, we load 16000 audio samples as a list of 16-bit integers. To make training a bit easier for our network, we'll normalize the input to a range of -1 to 1 by dividing the samples by 2^15. This is the only preprocessing we'll do and, depending on the audio format used by the microphone, may or may not be required in our iOS app.
+
 `samples = samples / (2**15)`
 
 Our network is defined as follows:
