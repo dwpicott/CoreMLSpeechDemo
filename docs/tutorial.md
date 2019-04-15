@@ -48,7 +48,7 @@ model.summary()
 
 This architecture was chosen pretty arbitrarily, and you should try to experiment and find a better one if you're so inclined. After training, the model is about 60% accurate on the data we set aside for validation. That's pretty abyssmal for any real applications, but it's okay for our demonstration purposes. For reference, the winner of the kaggle challenge achieved around 91% accuracy.
 
-Note the Reshape layer right at the beginning. CoreML only supports 1, 3, or 5 dimensions for input, but our convolutional network needs a second dimension for the convolution filters. The Reshape layer adds that second dimension to the 1-dimensional input.
+Note the Reshape layer right at the beginning. CoreML only supports 1, 3, or 5 dimensions for input, but our convolutional network needs a second dimension for the convolution filters. The Reshape layer adds that second dimension to the 1-dimensional audio input.
 
 ## Converting to CoreML
 
@@ -58,4 +58,89 @@ There are a few key things to keep in mind when converting a Keras model to Core
 - CoreML only supports input of 1, 3 or 5 dimensions. If your model needs a different format, you must include a Reshape layer to transform it into that format.
 - Not all Keras layers are supported by Apple's converter. If your model features more advanced layers, you can look into writing a [custom conversion tool](https://developer.apple.com/documentation/coreml/converting_trained_models_to_core_ml) or adding them as [custom layers](https://developer.apple.com/documentation/coreml/core_ml_api/creating_a_custom_layer)
 
+Our model is simple enough that it can be converted using the converter that Apple provides through the coremltools module. We just need to import it and run the keras converter on our model.
+
+```python
+import coremltools
+
+coreMLModel = coremltools.converters.keras.convert(
+    model,
+    class_labels = labelNames)
+```
+
+The optional class_labels parameter adds the human-readable name of each command class so we don't need to worry about the specific order of the output.
+
+The converter will display the layers as they are added to the CoreML model. To make sure the input and output has been properly formatted, we can check coreMLModel.get_spec, which will output something like this:
+```
+<bound method MLModel.get_spec of input {
+  name: "input1"
+  type {
+    multiArrayType {
+      shape: 16000
+      dataType: DOUBLE
+    }
+  }
+}
+output {
+  name: "output1"
+  type {
+    dictionaryType {
+      stringKeyType {
+      }
+    }
+  }
+}
+output {
+  name: "classLabel"
+  type {
+    stringType {
+    }
+  }
+}
+predictedFeatureName: "classLabel"
+predictedProbabilitiesName: "output1"
+>
+```
+As we can see, the input has the proper shape and the output will include the name of the most probable class and a dictionary containing the full set of softmax probabilities for each class. If we wanted to optimize the model's size, we could reduce the input precision from double to float, but it's not too important.
+
+Finally, we save the model in a .mlmodel file which can be accessed inside the app.
+```python
+coreMLModel.save('FlatSpeech.mlmodel')
+```
+
 ## Accessing the Model
+
+Once the CoreML model has been saved, create a single-view iOS app and add the model to the project files.
+
+For easy access to the model from inside the app, we'll add a class that will wrap its classification function. XCode will automatically generate a class for the model, so to access we just need to import CoreML and instantiate that class.
+
+```swift
+import CoreML
+
+class FlatSpeechModelWrapper {
+
+    let model = FlatSpeech()
+}
+```
+
+To perform classification, the model needs to be provided with a MLMultiArray containing the input data. In this case, the 16000 normalized audio samples. Our Classify wrapper function will take an AudioQueue, which is a class we've created to contain the buffered audio data in integer form. We normalize each sample stored in the queue and add it to a MLMultiArray. We construct a FlatSpeechInput object out of that and ask the model to make a prediction based on that input.
+
+```swift
+func Classify(audioQueue : AudioQueue) throws -> FlatSpeechOutput {
+    let audio = audioQueue.data
+    let audioArray = try MLMultiArray(shape: [16000], dataType: .double)
+
+    for i in 1..<16000{
+        var sample = Double(audio![i])
+        sample = sample / pow(2, 15) // Normalize
+        audioArray[i] = NSNumber(value: sample)
+    }
+    let input = FlatSpeechInput(input1: audioArray)
+    let output = try model.prediction(input: input)
+
+    return output
+}
+```
+
+The return value from the classify function is a FlatSpeechOutput object, which contains the label of the predicted command and the softmax probabilities of each command.
+
