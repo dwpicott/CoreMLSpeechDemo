@@ -8,6 +8,7 @@ This tutorial will walk you through the steps to integrate a custom CoreML speec
 3. [Accessing the Model](#accessing-the-model)
 4. [Getting Audio Data](#getting-audio-data)
 5. [Performing Classification](#performing-classification)
+6. [Results](#results)
 
 ## The Speech Model
 
@@ -371,3 +372,18 @@ override func viewDidLoad() {
     startClassification()
 }
 ```
+
+## Results
+
+So what have we made after all of this? Well, the classifier is quite inaccurate as mentioned previously, and it's not helped by our less-than optimal way of accessing the mic audio. Despite this, it is able to recognize spoken commands and display an image related to them.
+
+![alt text](screenshot.png "A screenshot of the app in action.")
+
+The most significant issues are as follows:
+1. The speech recognition model is very inaccurate, with only about a 60% validation accuracy.
+2. Some classes, such as "up", are predicted with a much higher confidence than they should be. This could be a problem with the model or the training data.
+3. The input audio isn't properly downsampled to 16kHz. Since that sample rate isn't supported, the input must either be manually downsampled or the model must be trained with training data in a supported format.
+4. As the audio queue slides its window across the input, the classification will change. This means that, for example, if the user says "stop", while it will be fairly reliably be identified, as the audio window moves away from the centre of the word, it will start classifying the "-op" sound as "up". While increasing the conidence threshold helps with this, it makes accurate classification harder and issue #2 means it isn't a reliable solution. Some possible solutions are:
+
+- Try to identify the start and end of a word and only classify within that range.
+- Pause classification and allow the queue to clear once the classifier is sufficiently confident with its result.
