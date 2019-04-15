@@ -6,6 +6,8 @@ This tutorial will walk you through the steps to integrate a custom CoreML speec
 1. [The Speech Model](#the-speech-model)
 2. [Converting to CoreML](#converting-to-coreml)
 3. [Accessing the Model](#accessing-the-model)
+4. [Getting Audio Data](#getting-audio-data)
+5. [Performing Classification](#performing-classification)
 
 ## The Speech Model
 
@@ -144,3 +146,136 @@ func Classify(audioQueue : AudioQueue) throws -> FlatSpeechOutput {
 
 The return value from the classify function is a FlatSpeechOutput object, which contains the label of the predicted command and the softmax probabilities of each command.
 
+## Getting Audio Data
+
+To start on the app's main functionality, we'll import AVFoundation and Foundation in the ViewController and declare some important variables
+
+```swift
+import AVFoundation
+import Foundation
+
+class ViewController: UIViewController {
+    
+    @IBOutlet weak var commandLabel: UILabel!
+    @IBOutlet weak var commandImageView: UIImageView!
+    @IBOutlet weak var currentClassLabel: UILabel!
+    @IBOutlet weak var confidenceSlider: UISlider!
+    @IBOutlet weak var confidenceLabel: UILabel!
+    
+    var recordingSession:AVAudioSession!
+    var updateTimer: Timer?
+    var engine = AVAudioEngine()
+    
+    //Time in seconds between each attempt to identify a command
+    let updatePeriod = 0.1
+    
+    //Required confidence before an action is triggered by a speech command
+    var confidenceThreshold = 0.8
+    
+    let model = FlatSpeechModelWrapper()
+
+    //Queue stores buffered audio
+    var audioQueue = AudioQueue(size: 16000, blockSize: 1600)
+```
+
+The most important elements here are the AVAudioSession and the AVAudioEngine. These are what we'll use to access the microphone's input.
+
+We'll use a function to start accessing the raw microphone input. First we'll reset the audio engine if needed, then configure an audio session with the format we need and request access to the microphone.
+
+```swift
+func startRecording() {
+        engine.stop()
+        engine.reset()
+        engine = AVAudioEngine()
+        
+        recordingSession = AVAudioSession.sharedInstance()
+            
+        do {
+            //Configure and activate the recording session
+            try recordingSession.setPreferredSampleRate(16000.0)
+            try recordingSession.setPreferredInputNumberOfChannels(1)
+            try recordingSession.setCategory(.record, mode: .default)
+            try recordingSession.setMode(.measurement)
+            try recordingSession.setPreferredIOBufferDuration(0.1)
+            try recordingSession.setActive(true)
+            
+            //Request mic access
+            recordingSession.requestRecordPermission() { [unowned self] allowed in
+                DispatchQueue.main.async {
+                    if allowed {
+                        print("Gained microphone permission.")
+                    } else {
+                        print("Microphone permission was denied.")
+                    }
+                }
+            }
+
+        } catch {
+            
+            assertionFailure("AVAudioSession setup error: \(error)")
+        }
+```
+
+In order to get the mic input in a useable format, we need a mixer node that will downsample the input audio. We'll make one and attach it to the engine.
+
+```swift
+let downmixer = AVAudioMixerNode()
+engine.attach(downmixer)
+```
+
+Since we want to access the output of the downmixer, we install a tap on it that will provide the audio buffer. Since the session's preferred buffer duration is a tenth of a second, we'll set the tap's buffer size to 1600 samples. The tap will provide the buffered audio to a function which we'll define later.
+
+```swift
+downmixer.installTap(onBus: 0, bufferSize: 1600, format: downmixer.outputFormat(forBus: 0)) { (buffer, time) in
+    self.handleAudioInput(buffer: buffer, time: time)
+}
+```
+
+Next, we'll define the format that we want the downmixer to output as. Unfortunately, there's a small problem here. The audio engine only supports three standard sample rates: 11025, 22050 and 44100. 11025 will work with our setup, but as a consequence the classifier will perceive the audio as about 50% faster than it actually is. To fix this, we would need to use a higher sample rate and manually downsample it to 16kHz. 
+
+For now, we can just work around it by talking slowly 👍
+
+```swift
+let format16KHzMono = AVAudioFormat(commonFormat: AVAudioCommonFormat.pcmFormatInt16, sampleRate: 11025.0, channels: 1, interleaved: true)
+```
+
+Next, we connect the downmixer into the audio pipeline. The input will flow into the downmixer, which will send its output to the main mixer node. We mute the main mixer node so it doesn't repeat everything the mic gets into the output. Notice that the audio format we defined earlier is applied to the connection between the downmixer and main mixer.
+
+```swift
+let input = engine.inputNode
+let inputFormat = input.inputFormat(forBus: 0)
+
+engine.connect(input, to: downmixer, format: inputFormat)
+engine.connect(downmixer, to: engine.mainMixerNode, format: format16KHzMono)
+
+//Prevent audio from being sent to the output
+engine.mainMixerNode.outputVolume = 0
+```
+
+Finally, we prepare the audio engine and try to start it.
+
+```swift
+engine.prepare()
+try! engine.start()
+```
+
+Remember the function we call from the downmixer's tap? We'll define it now.
+
+```swift
+ func handleAudioInput(buffer: AVAudioPCMBuffer, time: AVAudioTime){
+        if (buffer.int16ChannelData != nil && buffer.frameLength == 1600){
+            audioQueue.enqueueBlock(block: buffer.int16ChannelData!.pointee)
+        }
+        else{
+            print("Error: Buffer not filled.")
+            print(buffer.frameLength)
+            print(buffer.int16ChannelData)
+        }
+    }
+```
+
+When the function receives a properly filled audio buffer, it adds it to the audio queue. 
+
+So why not just buffer a full second of audio and perform classification here? Well, the tap block is called whenever its buffer is filled. What if the user starts saying something at the end of one buffer and ends at the beginning of another? We want a smooth sliding window of audio to handle such cases, which is what the audio queue allows. We'll go over setting up the actual classification in the next section.
+
+## Performing Classification
