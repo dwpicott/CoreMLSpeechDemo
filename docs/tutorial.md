@@ -279,3 +279,95 @@ When the function receives a properly filled audio buffer, it adds it to the aud
 So why not just buffer a full second of audio and perform classification here? Well, the tap block is called whenever its buffer is filled. What if the user starts saying something at the end of one buffer and ends at the beginning of another? We want a smooth sliding window of audio to handle such cases, which is what the audio queue allows. We'll go over setting up the actual classification in the next section.
 
 ## Performing Classification
+
+We'll define a function that will take the data stored in the audio queue and pass it to the model. 
+
+```swift
+//Attempt to classify the currently buffered audio
+func classifyAudio(){
+    do{
+        let output = try model.Classify(audioQueue: audioQueue)
+
+        let confidence = (output.output1[output.classLabel] ?? 0)
+        print(String(format: "Hearing: \(output.classLabel) with confidence: %.4f", confidence))
+        currentClassLabel.text = String(format: "Hearing \"\(output.classLabel)\" with confidence: %.1f%%", confidence * 100)
+
+        //Do something with the classification...
+
+    }
+    catch let err{
+        print(err)
+    }
+}
+```
+
+Here we get the classification of the currently queued audio. Next, we'll check if it is a valid command and if the classification confidence meets the threshold. If it does, we'll display the command.
+
+```swift
+if (confidence >= confidenceThreshold && output.classLabel != "silence" && output.classLabel != "unknown"){
+    commandLabel.text = "Last command: \(output.classLabel)"
+
+    //Take an action based on the command (in this case, show an image)
+    switch (output.classLabel){
+    case "yes":
+        commandImageView.image = UIImage(named: "thumb-up")
+        break
+    case "no":
+        commandImageView.image = UIImage(named: "thumb-down")
+        break
+    case "up":
+        commandImageView.image = UIImage(named: "plain-arrow-up")
+        break
+    case "down":
+        commandImageView.image = UIImage(named: "plain-arrow-down")
+        break
+    case "left":
+        commandImageView.image = UIImage(named: "plain-arrow-left")
+        break
+    case "right":
+        commandImageView.image = UIImage(named: "plain-arrow-right")
+        break
+    case "on":
+        commandImageView.image = UIImage(named: "light-bulb-on")
+        break
+    case "off":
+        commandImageView.image = UIImage(named: "light-bulb-off")
+        break
+    case "stop":
+        commandImageView.image = UIImage(named: "traffic-lights-red")
+        break
+    case "go":
+        commandImageView.image = UIImage(named: "traffic-lights-green")
+        break
+    default:
+        print("Unexpected classification: \(output.classLabel)")
+        break
+    }
+}
+```
+
+So we have our classification function, now we need to trigger it somehow. We'll make a timer that calls it based on the interval we defined earlier.
+
+```swift
+//Register a timer for classifying the Audio
+func startClassification(){
+    guard updateTimer == nil else {return}
+    self.updateTimer = Timer(timeInterval: self.updatePeriod, repeats: true, block: { (timer) in
+        self.classifyAudio()
+    })
+    RunLoop.current.add(updateTimer!, forMode: .default)
+}
+```
+
+This function will setup a timer that will call the classifyAudio function every updatePeriod (0.1 seconds based on the declaration earlier.)
+
+Finally, we need to call both setup functions from viewDidLoad.
+
+```swift
+override func viewDidLoad() {
+    super.viewDidLoad()
+    // Do any additional setup after loading the view, typically from a nib.
+    startRecording()
+    startClassification()
+}
+```
